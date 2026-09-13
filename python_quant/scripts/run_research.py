@@ -201,7 +201,9 @@ def ic_study(rep: dict, *, horizons: tuple[int, ...], train: float, val: float, 
         for name in FEATURES:
             x = feats[name][1:m]
             res = run_experiment(y[masks["test"]], x[masks["test"]], n_boot=n_boot)["overall"]
-            sel = masks["test"] & nz
+            # sign agreement where BOTH label and feature take a side (a zero feature
+            # is "no view", not a wrong call — sparse features like per-event OFI are 0 most of the time)
+            sel = masks["test"] & nz & (x != 0.0)
             hit = float(np.mean(np.sign(x[sel]) == np.sign(y[sel]))) if sel.sum() >= 10 else None
             out["rows"].append({
                 "horizon_h": h, "feature": name,
@@ -209,7 +211,8 @@ def ic_study(rep: dict, *, horizons: tuple[int, ...], train: float, val: float, 
                 "ic_train": rank_ic(y[masks["train"]], x[masks["train"]]),
                 "ic_val": rank_ic(y[masks["val"]], x[masks["val"]]),
                 "ic_test": res["rank_ic"], "ci95_lo": res["ci95"]["lo"], "ci95_hi": res["ci95"]["hi"],
-                "hit_rate_nonzero_test": hit, "decile_spread_test": res["decile_spread"],
+                "hit_rate_nonzero_test": hit, "hit_coverage_test": float(sel.sum() / max(1, (masks["test"] & nz).sum())),
+                "decile_spread_test": res["decile_spread"],
                 "frac_label_nonzero_test": float(np.mean(nz[masks["test"]])),
             })
             test_preds[name] = _ols_fit_predict(x[masks["train"]], y[masks["train"]], x[masks["test"]])
@@ -221,10 +224,12 @@ def ic_study(rep: dict, *, horizons: tuple[int, ...], train: float, val: float, 
         pred_te = Xte @ beta
         res = run_experiment(y[masks["test"]], pred_te, n_boot=n_boot)["overall"]
         sel = masks["test"] & nz
+        yt_nz = y[sel]
+        pred_nz = pred_te[nz[masks["test"]]]
         out["combined"].append({
             "horizon_h": h, "n_test": int(masks["test"].sum()), "ic_test": res["rank_ic"],
             "ci95_lo": res["ci95"]["lo"], "ci95_hi": res["ci95"]["hi"],
-            "hit_rate_nonzero_test": float(np.mean(np.sign(pred_te[nz[masks["test"]]]) == np.sign(y[sel]))) if sel.sum() >= 10 else None,
+            "hit_rate_nonzero_test": float(np.mean(np.sign(pred_nz) == np.sign(yt_nz))) if sel.sum() >= 10 else None,
             "coefs": dict(zip(["intercept", *names], beta.tolist())),
             "ic_train": rank_ic(y[masks["train"]], Xtr @ beta),
         })
@@ -304,8 +309,9 @@ def render_md(day: str, per_symbol: dict[str, dict]) -> str:
         "Source: `emi.nasdaq.com` public sample day (provenance in `python_quant/scripts/fetch_itch.py`). "
         "Regular session only (09:30–16:00), event clock, walk-forward 60/20/20 split with a gap of the largest "
         "horizon. Labels: forward mid move in ticks ($0.0001) at `h` events. IC = Spearman rank IC; the 95% CI is a "
-        "block bootstrap on the test split; hit% is sign agreement on test rows whose label is non-zero (an "
-        "unchanged mid is neither hit nor miss). `ofi_order` is the order-level OFI of the current event, "
+        "block bootstrap on the test split; hit% is sign agreement on test rows where the label AND the feature are "
+        "non-zero (an unchanged mid is neither hit nor miss; a zero feature is no view), with the share of non-zero-label "
+        "rows the feature takes a view on in `cov`. `ofi_order` is the order-level OFI of the current event, "
         f"`ofi_order_w20` its rolling {OFI_WINDOW}-event sum; `ofi_l2` is the L2-ladder approximation it replaces."
     )
     lines.append("")
@@ -318,15 +324,15 @@ def render_md(day: str, per_symbol: dict[str, dict]) -> str:
              f"tracker unknown ids: {tape['tracker_unknown_id']}; parse {tape['t_parse_s']:.1f}s, replay "
              f"{tape['t_replay_s']:.1f}s."), "",
             "### E1–E4 — signal → forward mid move", "",
-            "| feature | h | IC train | IC val | **IC test** | 95% CI (test) | hit% (nz, test) | decile spread (ticks) | label≠0 |",
-            "|---|---|---|---|---|---|---|---|---|",
+            "| feature | h | IC train | IC val | **IC test** | 95% CI (test) | hit% (test) | cov | decile spread (ticks) | label≠0 |",
+            "|---|---|---|---|---|---|---|---|---|---|",
         ]
         for r in res["ic"]["rows"]:
             lines.append(
                 f"| {r['feature']} | {r['horizon_h']} | {fmt(r['ic_train'])} | {fmt(r['ic_val'])} | "
                 f"**{fmt(r['ic_test'])}** | [{fmt(r['ci95_lo'])}, {fmt(r['ci95_hi'])}] | "
-                f"{fmt(r['hit_rate_nonzero_test'], 100, 6, 1)} | {fmt(r['decile_spread_test'], 1, 8, 1)} | "
-                f"{fmt(r['frac_label_nonzero_test'], 100, 5, 1)}% |"
+                f"{fmt(r['hit_rate_nonzero_test'], 100, 6, 1)} | {fmt(r.get('hit_coverage_test'), 100, 5, 0)}% | "
+                f"{fmt(r['decile_spread_test'], 1, 8, 1)} | {fmt(r['frac_label_nonzero_test'], 100, 5, 1)}% |"
             )
         lines += ["", "OLS combination of all features (fit on train only, z-scored on train), scored on test:", "",
                   "| h | IC train | **IC test** | 95% CI | hit% (nz) |", "|---|---|---|---|---|"]

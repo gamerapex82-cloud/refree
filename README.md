@@ -16,7 +16,8 @@ and `HIGHVOL_PLAN.md` (the high-vol execution regime behind the slippage work).
 | Metric | Target | Status |
 |---|---|---|
 | C++ matching engine | >500k ord/s, sub-µs, **0 allocs/op** | 0-alloc ✅ proven; throughput/latency on real hardware |
-| **PPO execution vs VWAP** | ~14% lower slippage (high-vol) | ⚠️ under fair re-verification — see `plan_2.md` §1b/§6 |
+| **PPO execution vs best fair baseline** | ~14% lower slippage (high-vol) | ❌ **not reproduced fairly** — 0/5 seeds significant vs `adaptive_pov` on high-vol, worse on calm/low-vol hold-outs, better only under liquidity shocks (+0.4…+1.4 bps, 5/5 seeds); fees+queue on, symmetric info, paired CIs — `docs/results/rl_fairness.md` |
+| **Real-tape microstructure signals** (E1–E6) | IC ≠ 0 with CIs on real NASDAQ ITCH | ✅ 12/30/2019 AAPL/QQQ: L1-imbalance rank IC 0.14→0.23 (AAPL) / 0.16→0.46 (QQQ) from h=1 to h=25, CIs ±0.01; fill model calibrated (slope 1.03–1.09); passive fills adversely selected 96–99 % — `docs/RESEARCH.md`, tables in `docs/results/real_tape_12302019.md` |
 | CUDA Monte-Carlo VaR/CVaR | ~40× speedup vs CPU | CPU ✅ exact parity; GPU kernel blocked (no toolkit) |
 
 
@@ -53,16 +54,26 @@ Pure-NumPy stack (no torch), byte-reproducible:
 | ITCH→L2 replay | `nexus_quant/replay.py` | `ReplayEngine` + `check_integrity` |
 | Injectable stub↔engine adapter | `nexus_quant/book_port.py` | swap the book, not the env |
 | Gymnasium execution env | `nexus_quant/envs/order_book_env.py` | 44-dim obs, IS reward + inv/time/adv penalties, **high-vol regime** |
-| Execution baselines | `nexus_quant/baselines.py` | TWAP / VWAP / POV / Passive |
+| Execution baselines | `nexus_quant/baselines.py` | TWAP / VWAP / POV / Passive + **fair** `schedule_twap` / `adaptive_pov` / `is_aware` (symmetric regime info) |
+| Named regimes + null arm | `nexus_quant/envs/regimes.py` | calm · lowvol · highvol · **highvol_null** (random walk) · trending · liquidity_shock; fees+queue overlay |
 | PPO agent (pure NumPy) | `nexus_quant/agents/ppo.py`, `mlp.py` | MLP, Adam, GAE, clipped surrogate |
 | GRPO agent (pure NumPy) | `nexus_quant/agents/grpo.py` | GRPO on the PPO actor interface |
-| Eval harness | `nexus_quant/agents/evaluate.py` | `strategy_table` / `format_table` |
+| Eval harness | `nexus_quant/agents/evaluate.py` | `strategy_table`; per-regime multi-seed `evaluate_regime_ci`, **paired** `paired_difference_ci` |
 | Train+eval CLI | `scripts/train_eval_agent.py` | `--highvol`, `--eval-only`, regime flags |
-| **Regime design doc** | `HIGHVOL_PLAN.md` | the high-vol regime + how it hits the headline |
+| **Fair RL re-verification** | `scripts/rl_fairness_study.py` → `docs/results/rl_fairness.md` | 5 train seeds × 5 eval families × 6 regimes × 2 info modes, fees+queue on |
+| Research spine (Part 2) | `nexus_quant/research/{features,labels,dataset,experiments,models}.py` | leak-locked features, walk-forward splits, rank IC / block bootstrap / DM |
+| Execution realism (Part 2) | `nexus_quant/execution/{cost_model,metrics,backtest}.py` | fees/rebates/impact, IS vs **market** VWAP, MDD |
+| Order-level queue + fill models (E5) | `nexus_quant/research/queue_dynamics.py` | `OrderLevelTracker`, Kaplan–Meier P(fill), logistic fill model + calibration |
+| Adverse selection (E6) | `nexus_quant/research/adverse_selection.py` | post-fill drift, Newey–West t, pre-fill matched control |
+| **Real NASDAQ ITCH tape** | `scripts/fetch_itch.py`, `scripts/run_research.py` | public `emi.nasdaq.com` day → per-symbol slice → E1–E6 (`docs/results/real_tape_12302019.md`) |
+| Regime design doc | `HIGHVOL_PLAN.md` | the high-vol regime (historical; its headline is retired above) |
 
-**Tests (all green):** **68 passed** — contract smoke, ITCH, replay, env,
-baselines, PPO + GRPO agents, risk parity (3× bit-for-bit), the high-vol regime
-(11 tests), dashboard codec/hub, and the risk↔env penalty.
+**Tests (all green):** **152 passed** — contract smoke, ITCH, replay, env,
+baselines, PPO + GRPO agents, risk parity (3× bit-for-bit), the high-vol regime,
+dashboard codec/hub, risk↔env penalty, research spine leak locks, cost model /
+backtest, queue tracker + Kaplan–Meier + logistic calibration, adverse selection,
+regimes / fair baselines / CI harness, and the real-tape slicer (the real-tape
+smoke runs whenever `data/itch/<day>/<SYMBOL>.itch` is present).
 
 ### 3. GPU risk engine (`cuda_risk/`) — Person A
 Monte-Carlo VaR/CVaR where the per-path RNG is a **pure function of
@@ -78,7 +89,7 @@ oracle draw *identical* paths → **bit-for-bit parity** (not MC tolerance).
 | pybind `compute_var_cvar` (CPU) | `bindings/pybind_wrapper.cpp` | ✅ |
 
 **Verified here (no GPU):** the risk parity oracle is **3/3 bit-for-bit** within
-the 52-test Python suite; CTest **5/5**. **Blocked:** the CUDA kernel and ~40×
+the 152-test Python suite; CTest **5/5**. **Blocked:** the CUDA kernel and ~40×
 speedup need `nvcc`/toolkit (WSL/Linux or Windows CUDA).
 
 ---
@@ -212,7 +223,7 @@ Finance Project-1/
 ## Build & test
 
 ```bash
-# Tier 1 — pure-Python (52 tests; works on Windows, no C++ build needed)
+# Tier 1 — pure-Python (152 tests; works on Windows, no C++ build needed)
 python -m pip install numpy gymnasium pytest
 python -m pytest python_quant/tests -v
 
@@ -234,6 +245,11 @@ g++ -std=c++20 -O2 -I cpp_engine/include cpp_engine/demos/ring_probe.cpp -o ring
 
 # Live desk (subsystem 4) — no C++ build needed
 python python_quant/scripts/serve_dashboard.py --synthetic   # → http://127.0.0.1:8765
+
+# Part 2 research — real NASDAQ ITCH day (public sample, ~3.5 GB gz streamed, data/ gitignored)
+python python_quant/scripts/fetch_itch.py --day 12302019 --symbols AAPL,QQQ
+python python_quant/scripts/run_research.py --day 12302019 --symbols AAPL,QQQ   # E1–E6 → docs/results/
+python python_quant/scripts/rl_fairness_study.py --quick                         # fair PPO re-verification (smoke)
 ```
 
 **Environment note:** the repo lives on a OneDrive path — keep `build/`,
@@ -249,10 +265,16 @@ python python_quant/scripts/serve_dashboard.py --synthetic   # → http://127.0.
 - ✅ Dashboard (subsystem 4/5) — combined desk served at `/` + static verification
   console; risk↔env inventory CVaR penalty wired (PRs #7–#9)
 - ✅ Monte-Carlo VaR/CVaR — CPU + exact parity (GPU kernel authored, blocked)
-- ⚠️ PPO slippage headline — no longer claimed; fair re-verification is the
-  research-half Phase 3 rework (`plan_2.md` §6)
-- ⏳ Remaining: CUDA compile + ~40× speedup on a GPU box; throughput/latency on
-  real hardware; the quant research layer (`plan_2.md` Phases 0→5).
+- ❌ PPO slippage headline — **re-verified fairly and not reproduced**: no
+  significant edge over the best fair baseline except under liquidity shocks
+  (`docs/results/rl_fairness.md`; `plan_2.md` §6 outcome)
+- ✅ Quant research layer (Part 2) Phases 0–5 — leak-locked spine, execution
+  realism, order-level queue / fill / adverse-selection studies, E1–E6 on a
+  real NASDAQ ITCH day (`docs/results/real_tape_12302019.md`), the full report
+  with a negative-results section (`docs/RESEARCH.md`) and a one-command
+  reproduce (`python python_quant/scripts/run_all.py`)
+- ⏳ Remaining: more tape days / symbols; CUDA compile + ~40× speedup on a GPU
+  box; throughput/latency on real hardware.
 
 See `PROGRESS.md` for the detailed status and `CLAUDE.md` for the current
 handoff.

@@ -164,7 +164,7 @@ summarize(rows) -> list[dict]   # per-(regime, policy) means
 
 ---
 
-## 3. WP3 — Phase 3: RL fairness + queue studies (weeks 3–4)
+## 3. WP3 — Phase 3: RL fairness + queue studies (weeks 3–4) — **SHIPPED 2026-09-13** (interfaces below updated to what landed)
 
 ### 3.1 Goal
 Re-verify the +50.4% headline under the §6 rework spec **before** it re-enters any README:
@@ -179,17 +179,39 @@ acceptable, honest result.
 
 ### 3.3 Interfaces (exact)
 ```python
-# research/queue_dynamics.py
-class OrderLevelTracker:  # per resting order: ahead_qty, behind_qty, cancel-cursor, consumed-at-level
-    on_add(msg); on_execute(msg); on_cancel_delete(msg); on_trade(msg)
-    fill_prob_survival(levels, *, hazard_fn)   # Kaplan–Meier; cancel = competing risk
-    logistic_fill_model(features) -> P(fill)   # calibrated on the synthetic stream w/ KNOWN queue
-# research/adverse_selection.py
-post_fill_drift(fills, book, h)                # signed drift over {1,5,25} events
-P_adverse(fill, book, ofi, queue_pos)          # P(adverse | passive fill), grouped by side/OFI/queue
-# agents/evaluate.py  (MODIFY — add, keep strategy_table intact)
-evaluate_regime_ci(policy, regimes: dict[str, OrderBookEnv], seeds=5) -> dict[str, {"mean","ci95"}]
+# research/queue_dynamics.py  (as shipped)
+class OrderLevelTracker:            # feed NormalizedEvent in tape order
+    on_event(ev); on_add/on_execute/on_cancel_delete/on_replace/on_trade(ev)
+    ahead_qty(oid) / behind_qty(oid) / level_size(side, px) / best_price(side)
+    orders: dict[oid, TrackedOrder]; completed: list[TrackedOrder]   # outcome "filled" | "cancelled"
+TrackedOrder(order_id, side, price, size, size0, ts_add, idx_add, ahead_at_add, ahead,
+             same_best_dist, opp_dist, filled, ts_first_fill, idx_first_fill, ts_end, idx_end, outcome)
+fill_prob_survival(orders, *, horizons, clock="events"|"ns", cancel_is_censoring=True) -> {tau, survival, p_fill, n, n_fill, n_cancel, median_fill_time}
+censor_open_orders(tracker, ts_end) -> list[TrackedOrder]          # still-resting orders as censored records
+order_features(o) -> {log_ahead, log_size, queue_frac, same_best_dist, opp_dist, no_opposite}
+logistic_fill_model(features, filled, *, l2=1e-3, holdout=0.3) -> {coefs, brier, brier_base_rate, brier_skill, calibration_slope, calibration_table, predict, ...}
+# research/adverse_selection.py  (as shipped)
+PassiveFill(idx, side, price, size, ofi, queue_frac)
+post_fill_drift(fills, mids, h) / pre_fill_drift(fills, mids, h) -> np.ndarray   # s·Δmid, NaN when no future
+nw_tstat(x, *, lag) -> {n, mean, se, t, p};  p_adverse(drifts) -> float (ties excluded)
+adverse_selection_report(fills, mids, *, horizons=(1,5,25), min_group=20) -> {n_fills, horizons: {h: {overall, pre_fill, post_minus_pre, groups}}}
+fills_from_tracker(completed, *, ofi_at=None) -> list[PassiveFill]
+# envs/regimes.py  (NEW)
+REGIMES, COSTS_ON, TRAIN_REGIME="highvol", HOLDOUT_REGIMES
+regime_kwargs(name, *, costs=True, vol_feature=False, **overrides) / make_regime(...) / regime_factories(names=None, ...)
+# baselines.py  (MODIFY, additive)
+AgentId += "schedule_twap" | "adaptive_pov" | "is_aware";  LEGACY_BASELINES / FAIR_BASELINES / ALL_BASELINES
+regime_indicator(env) -> bool | None          # == obs[44] when vol_feature else None (symmetric information)
+volume_curve_target(t_frac, *, u_weight=0.6)  # CDF of 1 + w·cos(2πt)
+# agents/evaluate.py  (MODIFY — strategy_table intact)
+run_regime_episodes(policy, regimes, *, seeds=5, episodes_per_seed=20, seed0, baselines=(), agent_name="ppo") -> {regime: {strategy: [row,...]}}
+ci_from_rows(rows, *, metric, name, regime, n_boot=2000) -> RegimeCI(name, regime, metric, mean, ci95, n_episodes, n_seeds, per_seed_mean)
+evaluate_regime_ci(policy, regimes, *, seeds=5, episodes_per_seed=20, metric="shortfall_bps", baselines=(), ...) -> {regime: {strategy: RegimeCI}}
+paired_difference_ci(policy, baseline, regimes, *, ..., episodes=None) -> {regime: {mean, lo, hi, n, frac_agent_better, pct_vs_baseline}}
+format_regime_table(result) -> str
+# scripts/rl_fairness_study.py  → docs/results/rl_fairness.{md,json}
 ```
+**Result (recorded):** PPO not significantly better than `adaptive_pov` on highvol / highvol_null / trending; significantly worse on calm / lowvol; significantly better only under `liquidity_shock`. The random-walk null arm behaves as designed (PPO ≈ baselines).
 - **Fairness fixes that must land here (§5 leakage list 1,2,3,5):**
   1. **vol_feat symmetric:** baselines observe the same regime indicator, or the feature is removed — never asymmetric.
   2. **eval ≠ train distribution:** hold out a regime set the agent never trains in.
@@ -200,7 +222,7 @@ evaluate_regime_ci(policy, regimes: dict[str, OrderBookEnv], seeds=5) -> dict[st
 
 ---
 
-## 4. WP4 — Phase 4: real tape (weeks 4–5, the credibility unlock)
+## 4. WP4 — Phase 4: real tape (weeks 4–5, the credibility unlock) — **SHIPPED 2026-09-13** (`fetch_itch.py`, `run_research.py`, `test_offline_real_tape.py`; parser needed NO decode fixes on 268 M real messages)
 
 ### 4.1 Files
 - **CREATE `scripts/fetch_itch.py`** (public NASDAQ ITCH sample → `data/`, gitignored; provenance + license in header), **CREATE `scripts/run_research.py`**
@@ -210,37 +232,40 @@ evaluate_regime_ci(policy, regimes: dict[str, OrderBookEnv], seeds=5) -> dict[st
 
 ### 4.2 Exact seams
 ```python
-# scripts/run_research.py
-def main(day: str) -> None:
-    msgs = itch_parser.read_tape(data / day)        # framed+raw, lazy parse
-    book = StubBookAdapter()                        # or EngineAdapter (real engine)
-    re = ReplayEngine(book); apply all msgs; check_integrity()
-    rows = event_frame(msgs, re.apply,
-                       feature_fns=_FEATURE_FNS, prev_feature_fns={"ofi": ofi},
-                       h=[1,5,10], label_fn=forward_mid_move)
-    split = make_split(rows, train=0.6, val=0.2, gap=10)
-    per feature: run_experiment(...) -> IC/ICIR/hit/decile + CI  # same fmt as vignette
-    E5/E6 run on top (queue + adverse selection from WP3)
-    write docs/RESEARCH.md tables + figures
-# test_offline_real_tape.py
-def test_real_tape_parses_clean():  # 0 truncated, integrity clean, < n sec runtime
+# scripts/fetch_itch.py  (as shipped)
+fetch(*, day, symbols, out_root, base=DEFAULT_BASE, max_gz_bytes=None) -> manifest dict
+#   streams https://emi.nasdaq.com/ITCH/Nasdaq%20ITCH/<day>.NASDAQ_ITCH50.gz (HTTP Range optional),
+#   inflates on the fly, writes data/itch/<day>/<SYMBOL>.itch (S + R + A F E C X D U P for that locate)
+#   + manifest.json (source URL, bytes, SHA-256, per-type counts). data/ is gitignored.
+# scripts/run_research.py  (as shipped — variance vs the draft: features are computed INLINE during the
+#   replay instead of via event_frame, because a full day is ~1.5 M views and event_frame materializes them;
+#   the split still uses make_split on the plan's Row primitive)
+replay_symbol(path, *, max_events=None) -> {features, mids, ts, tape_idx, tracker, stats, issues, ...}
+order_level_ofi(ev, live_before) -> float       # Cont–Kukanov–Stoikov e_n from the order stream
+ic_study(rep, *, horizons, train, val, n_boot) -> {rows, combined, dm}   # E1–E4
+fill_study(rep, *, horizons_events) -> {km, logistic, outcomes, ...}      # E5
+adverse_study(rep, *, horizons) -> adverse_selection_report(...)           # E6
+#   → docs/results/real_tape_<day>_<SYMBOL>.json + docs/results/real_tape_<day>.md
+# tests/test_offline_real_tape.py
+test_symbol_slicer_keeps_exactly_the_symbol_stream()   # always runs (hand-built framed stream, byte-exact)
+test_real_tape_parses_clean()                           # skips unless data/itch/<day>/<SYMBOL>.itch exists
 ```
-- **Parser order-level upgrade (A/B):** OFI must move from the L2-ladder *approximation* (`features.ofi(prev_view, cur_view)`) to order-level deltas once the parser emits them — that upgrade is the E5/E6 precondition and is flagged in plan_2.md Phase 2 of `features.py` (`ofi` "approximation first, upgrade when order-level tracker lands").
+- **Parser order-level upgrade (A/B) — DONE:** the parser already emitted order-level events; `run_research.py::order_level_ofi` computes the exact per-event OFI from the tracker's live order state, and `features.ofi` (the L2 approximation) was upgraded to the Cont–Kukanov–Stoikov level-1 definition. On the real day the rolling order-level OFI beats the L2 approximation at h ≥ 10 on both names (AAPL 0.189 vs 0.149, QQQ 0.151 vs 0.121 at h=10) but is *weaker* at h=1, where a single event's OFI is zero most of the time (`docs/results/real_tape_12302019.md`, `docs/RESEARCH.md` §4 E3).
 
 ---
 
 ## 5. Merge/workflow rules (both halves)
 
 - Work on `feature/part2-*` branches, small PRs, **real merge commits** (project rule — commit count visible, never squash).
-- Each PR: Tier-1 pytest green (`86 passed / 1 skipped` today), ruff clean, test count ticks up.
+- Each PR: Tier-1 pytest green (`152 passed` today), ruff clean, test count ticks up.
 - End-of-token handoff: update **`plan_2.md` §10 running log** (append one bullet per session) so the next session resumes without re-derivation.
 
 ## 6. Definition of done (checklist — copy into the WP4 PR body)
 
-- [ ] `python -m pytest python_quant/tests` green (today: 86 passed / 1 skipped)
-- [ ] `scripts/research_vignette.py` runs, prints honest null IC table (≈0, CIs straddling 0)
-- [ ] Phase 2: `test_cost_model.py` + `test_exec_backtest.py` green; env byte-parity test with defaults
-- [ ] Phase 3: `evaluate_regime_ci` ≥5 seeds per regime; fairness toggles verified symmetric; random-walk null arm result recorded
-- [ ] Phase 4: `fetch_itch.py` + `run_research.py` produce an E1–E7 table from a real day; `test_offline_real_tape.py` green
-- [ ] Headline re-verified or re-characterized with CI; README only ever uses measured numbers
-- [ ] `plan_2.md` running log updated; this doc's interfaces still match the code
+- [x] `python -m pytest python_quant/tests` green (today: 152 passed)
+- [x] `scripts/research_vignette.py` runs, prints honest null IC table (≈0, CIs straddling 0)
+- [x] Phase 2: `test_cost_model.py` + `test_exec_backtest.py` green; env byte-parity test with defaults
+- [x] Phase 3: `evaluate_regime_ci` ≥5 seeds per regime; fairness toggles verified symmetric (`test_rl_fairness.py`); random-walk null arm result recorded (`docs/results/rl_fairness.md`)
+- [x] Phase 4: `fetch_itch.py` + `run_research.py` produce E1–E6 tables from a real day (`docs/results/real_tape_12302019.md`); `test_offline_real_tape.py` green (E7 = the fairness study, synthetic regimes)
+- [x] Headline re-characterized with CI (not reproduced); README uses only measured numbers
+- [x] `plan_2.md` running log updated; this doc's interfaces match the code (this bump)

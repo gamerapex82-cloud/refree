@@ -1,10 +1,21 @@
 # Nexus-LOB — Progress Report
 
-**Status date:** 2026-09-06 · **Branch:** `main` (+ `feature/risk-engine` for subsystem 3) · **Milestone:** C++ matching engine + pybind seam, Person B's ITCH/env/baselines/PPO agent, **and now Person A's Monte-Carlo VaR/CVaR risk engine (subsystem 3) — CPU-validated, CUDA kernel authored but blocked for GPU testing**. This file is a plain-language
+**Status date:** 2026-09-13 · **Branch:** `main` (+ Person B branch `hoplite/kranioi-5b44d8a8` for Part 2 Phases 3–5, PR pending) · **Milestone:** C++ matching engine + pybind seam, Person B's ITCH/env/baselines/PPO agent, Person A's Monte-Carlo VaR/CVaR risk engine (CPU-validated, CUDA blocked), **and now the Part 2 quant research layer complete through Phase 5: a real NASDAQ ITCH day parsed/replayed/diff-tested against the C++ engine, E1–E6 microstructure results with CIs (`docs/RESEARCH.md`), and the RL slippage headline re-verified fairly and retired (`docs/results/rl_fairness.md`)**. This file is a plain-language
 snapshot for anyone (Person A or Person B) picking the project up; the authoritative,
 constantly-updated handoff doc is `CLAUDE.md`.
 
-> TL;DR: the cross-language state contract is frozen, the C++ matching engine is
+> **2026-09-13 — Person B, Part 2 (plain language):** we downloaded a real NASDAQ order-by-order
+> tape (2019-12-30, AAPL + QQQ — 268 M messages), ran it through our parser and book with zero
+> decode errors, and confirmed the C++ engine and the Python oracle produce the identical ladder
+> on real bytes. On that tape the top-of-book imbalance genuinely predicts the next few mid
+> moves (rank IC 0.14→0.46 as the horizon grows, tight CIs), passive limit orders that do get
+> filled are almost always run over by the price right after (96–99 %), and our fill-probability
+> model is calibrated. We also re-ran the PPO-vs-VWAP comparison *fairly* (same information for
+> everyone, fees and queue on, five seeds, unseen regimes): the agent is **not** better than a
+> decent adaptive schedule except when liquidity dries up — so the old "+50 % lower slippage"
+> is retired. Full report: `docs/RESEARCH.md`; how to reproduce: `python_quant/scripts/run_all.py`.
+>
+> TL;DR (systems half): the cross-language state contract is frozen, the C++ matching engine is
 > built and passing its own tests (86/86), the Python bridge drives that real engine,
 > and the **shared-memory ring** that will feed the dashboard (subsystem 5's C++ core)
 > is built and demoed live. **Person B has also landed** the ITCH 5.0 parser, an

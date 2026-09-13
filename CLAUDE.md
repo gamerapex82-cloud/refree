@@ -5,8 +5,7 @@
 > **§7 Next steps** so the next session resumes without re-deriving everything.
 > **Part 2 (quant research layer) plan of record: `plan_2.md`** — read that FIRST
 > for the research half; this file stays the systems-half handoff.
-> Last updated: **2026-09-12**.
-> Last updated: **2026-09-09**.
+> Last updated: **2026-09-13** (Person B: Part 2 Phases 3–5 landed — see `plan_2.md` §10 and `progress_b.md`).
 
 ---
 
@@ -25,7 +24,12 @@ Headline resume metrics (status):
 - C++20 matching engine: **>500k orders/sec, sub-microsecond latency**, zero-alloc —
   **0 allocs/op proven**; throughput/latency to re-measure on real hardware.
 - PPO/GRPO execution agent: **~14% lower slippage vs VWAP** —
-  **+50.4% achieved** (high-vol regime, 2026-09-07).
+  **retired 2026-09-13**: the +50.4% (2026-09-07) did not survive a fair re-verification
+  (symmetric info, fees+queue, 5 seeds, hold-out regimes, paired CIs vs `adaptive_pov`) —
+  no significant edge except under liquidity shocks. See `docs/results/rl_fairness.md`.
+- **Real-tape microstructure research (Part 2):** E1–E6 on NASDAQ ITCH 2019-12-30 AAPL/QQQ —
+  L1 imbalance rank IC 0.14–0.46 with tight CIs, calibrated fill model (slope 1.03–1.09),
+  passive fills adversely selected 96–99%. `docs/RESEARCH.md`.
 - CUDA Monte-Carlo VaR/CVaR: **~40× speedup** vs CPU —
   CPU ✅ exact parity; GPU kernel authored, **blocked** (no CUDA toolkit).
 
@@ -336,7 +340,9 @@ All 12 original plan items are complete. Remaining work is **polish & measuremen
 | Throughput/latency on real hardware (>500k ord/s, sub-µs) | Person A | Yes — Windows sandbox throttles; needs Linux/real box |
 | ~~Reconcile two dashboard pages~~ — both now on `main` (combined desk + verification console) | Both | ✅ 2026-09-12 |
 | Execution timeline + inventory chart in dashboard | Person B | No |
-| Final README.md polish + write-up | Both | No |
+| ~~Final README.md polish + write-up~~ — README status/headline table rewritten with measured numbers; `docs/RESEARCH.md` full report | Both | ✅ 2026-09-13 |
+| **Part 2 quant research layer** (plan_2.md): ~~Phase 0–1 spine~~ ✅ · ~~Phase 2 execution realism~~ ✅ · ~~Phase 3 queue/adverse-selection + RL fairness~~ ✅ · ~~Phase 4 real ITCH tape~~ ✅ · ~~Phase 5 report + `run_all.py`~~ ✅ (2026-09-13, Person B branch `hoplite/kranioi-5b44d8a8`) | Person B | No — merge the PR |
+| More real tape days / symbols (each day ≈ 14 min stream via `fetch_itch.py`) | Person B | No |
 
 ## 8. Environment reality (IMPORTANT — read before running anything)
 
@@ -419,4 +425,10 @@ g++ -std=c++20 -O2 -Wall -Wextra -I cpp_engine/include \
 PYTHONPATH=python_quant python python_quant/scripts/train_eval_agent.py \
     --highvol --vol-feature --iters 2000 --eval-every 400 --eval-episodes 40 \
     --out python_quant/artifacts/policy_ppo_highvol.npz --table-episodes 100
+
+# Part 2 research layer (Person B) — real NASDAQ ITCH day + fair RL re-verification:
+python python_quant/scripts/run_all.py --quick          # smoke of every stage (minutes)
+python python_quant/scripts/fetch_itch.py --day 12302019 --symbols AAPL,QQQ    # ~14 min, data/ gitignored
+python python_quant/scripts/run_research.py --day 12302019 --symbols AAPL,QQQ  # E1–E6 → docs/results/
+python python_quant/scripts/rl_fairness_study.py                               # E7 → docs/results/rl_fairness.md
 ```

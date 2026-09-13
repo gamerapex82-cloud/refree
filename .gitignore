@@ -65,3 +65,4 @@ Desktop.ini
 
 # --- Claude Code worktrees: local dev working copies, NEVER track ---
 .claude/worktrees/
+docs/results/quick/

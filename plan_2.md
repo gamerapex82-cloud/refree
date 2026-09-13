@@ -1,6 +1,6 @@
 # Nexus-LOB — Part 2: Quant Research Layer (Plan of Record)
 
-**Last updated:** 2026-09-13 · **Status:** Phase 0 + Phase 1 landed (on `main`, PR #15); **Phase 2 (execution realism) landed on `feature/part2-phase2-cost-queue` (2026-09-13 — not yet merged; PR pending)**; next is Phase 3 (queue dynamics + RL fairness rework). Person B work-package for Phases 2–4: `docs/work_package_b_phases_2_4.md` (Phase-2 API frozen in §2.2, bumped this session).
+**Last updated:** 2026-09-13 (final) · **Status:** Phases 0–2 on `main` (PRs #15, #16); **Phases 3, 4 and 5 landed on the Person B branch `hoplite/kranioi-5b44d8a8` (PR pending)** — Phase 3 (queue dynamics E5/E6 + RL fairness rework, §6 — DONE, headline re-characterized), Phase 4 (real NASDAQ ITCH tape: `fetch_itch.py` + `run_research.py`, E1–E6 on 12/30/2019 AAPL/QQQ), Phase 5 (`docs/RESEARCH.md` full report incl. negative results, `scripts/run_all.py` one-command reproduce, honest README rewrite). Research half **complete**; remaining are more tape days and Person A's GPU/hardware items. Person B work-package for Phases 2–4: `docs/work_package_b_phases_2_4.md`.
 **Read this FIRST each session, then `CLAUDE.md`.** This is the single source of truth for the research-half roadmap. Keep updating it as work progresses (§ Running log at the bottom).
 
 ---
@@ -126,23 +126,23 @@ Exact shipped API: **`docs/work_package_b_phases_2_4.md §2.2`** (frozen). Signa
 - **MODIFY `envs/order_book_env.py`** — accept `fee_bps`, `rebate_bps`, `impact_coef`, `impact_participation` (0.1), `queue_model` (`""`/`"uniform"`, validated; default `""` = today's mechanics) — **byte-identical to today** when defaulted. Add **`market_vwap` to `info`** in every `step` (volume-weighted over the tape's own prints; the agent's own active fills are excluded from the benchmark).
 - **TEST `tests/test_cost_model.py` (+10), `tests/test_exec_backtest.py` (+14)** — fee/rebate signs, square-root-law monotonicity, MDD on a hand-built path, slippage-vs-market & sign pins, cost-folds-into-reward-not-slippage, env byte-parity with defaults, market-VWAP volume-weighting. Full suite: **110 passed / 1 skipped**; ruff clean.
 
-### Phase 3 — RL fairness + queue studies (P0/P1, weeks 3–4)
+### Phase 3 — RL fairness + queue studies (P0/P1, weeks 3–4) — **LANDED 2026-09-13** (`research/queue_dynamics.py`, `research/adverse_selection.py`, `envs/regimes.py`, fair baselines, `evaluate_regime_ci` / `paired_difference_ci`, `scripts/rl_fairness_study.py` → `docs/results/rl_fairness.md`)
 - **CREATE `python_quant/nexus_quant/research/queue_dynamics.py`** — order-level tracker over an ITCH stream: per resting order `ahead_qty`, `behind_qty`, cancel-cursor, consumed-at-level, fill/delete events; survival: `fill_prob_survival(...)` (Kaplan–Meier, cancel = competing risk), `logistic_fill_model(features) -> P(fill)`.
 - **CREATE `python_quant/nexus_quant/research/adverse_selection.py`** — `post_fill_drift(fills, book, h)` over {1,5,25} events, conditioned on (fill side, OFI, queue position); `P(adverse | passive fill)`.
 - **MODIFY `agents/evaluate.py`** — `evaluate_regime_ci(policy, regimes, seeds=5)` returns per-regime mean ± bootstrap-95%-CI of IS; add a **fair `volFeat` toggle**: baselines get the same indicator or the feature is disabled — the comparison must be symmetric.
 - **MODIFY `agents/baselines.py` (or add `agents/baselines_rl.py`)** — stronger, defensible baselines: adaptive-POV (reacts to spread/vol), schedule-TWAP with a volume curve, IS-aware rule. Retire the 2-line "VWAP" heuristic as the reference.
 - **TEST `tests/test_queue_dynamics.py`, `tests/test_adverse_selection.py`** — fill-prob calibration on a synthetic stream with a *known* queue; adverse-drift sign test; E5/E6 wiring.
 
-### Phase 4 — Real data (P0, weeks 4–5 — the credibility unlock)
+### Phase 4 — Real data (P0, weeks 4–5 — the credibility unlock) — **LANDED 2026-09-13** (`scripts/fetch_itch.py`, `scripts/run_research.py`, `tests/test_offline_real_tape.py`; results `docs/results/real_tape_12302019.md`)
 - **CREATE `scripts/fetch_itch.py`** — download a public NASDAQ ITCH sample (e.g. classic 2020-02-28 `S030220-v50.txt.gz`, or a published SPY/NVDA day) into **`data/`** (already gitignored). Record provenance + license note in the script header.
 - **MODIFY `itch_parser.py`** — fix any real-file decode issues that surface; expose order-level events for OFI/queue (this is where the parser earns its keep).
 - **CREATE `scripts/run_research.py`** — runs E1–E4 on the real tape; outputs IC/ICIR table + bootstrap CIs + figures.
 - **TEST `tests/test_offline_real_tape.py`** — smoke: parser consumes the real tape with 0 truncated, integrity checks clean.
 
-### Phase 5 — Report + write-up (P1/P2, week 5–6)
-- **CREATE `docs/RESEARCH.md`** (full) — hypotheses, methods, split discipline, IC tables, per-regime execution results, adverse-selection findings, **negative results section**.
-- **CREATE `scripts/run_all.py`** — one-command reproduce: fetch → build → test → research vignettes → exec comparisons → report.
-- **MODIFY `README.md`** — final honest rewrite using only measured numbers.
+### Phase 5 — Report + write-up (P1/P2, week 5–6) — **LANDED 2026-09-13** (`docs/RESEARCH.md`, `scripts/run_all.py`, README/PROGRESS/CLAUDE rewritten to measured numbers)
+- **CREATE `docs/RESEARCH.md`** (full) — hypotheses, methods, split discipline, IC tables, per-regime execution results, adverse-selection findings, **negative results section**. ✅ §1–§10: data provenance + parser validation, split/rigor discipline, E1–E4 tables (AAPL + QQQ, test-split IC with CIs), E5 KM + logistic calibration, E6 signed drift with pre-fill control, E7 fair RL table, §8 seven negative results, §9 reproduce, §10 DoD.
+- **CREATE `scripts/run_all.py`** — one-command reproduce: fetch → build → test → research vignettes → exec comparisons → report. ✅ stages `tests, vignette, fetch, research, fairness`, each skippable; `--quick` smoke of every stage (64 MB of the gzip, one symbol, 100k rows, 2 seeds) writes to the gitignored `docs/results/quick/`; defaults reproduce `docs/results/` exactly.
+- **MODIFY `README.md`** — final honest rewrite using only measured numbers. ✅ headline table restated as point estimates with CIs; PPO line reads "not reproduced fairly".
 
 ---
 
@@ -181,6 +181,8 @@ Exact shipped API: **`docs/work_package_b_phases_2_4.md §2.2`** (frozen). Signa
 4. Fair baselines: adaptive-POV, schedule-TWAP with a volume curve, IS-aware rule. Evaluate all strategies under a **shared objective** (same IS metric) and with fees + queue on.
 5. Report IS vs **market** VWAP, completion%, MDD per regime.
 6. Then, and only then, one line in README: "PPO vs best baseline: [X] bps IS improvement (CI [±Y]) under [regime]." If it's not significantly better, say so.
+
+**Outcome (2026-09-13, `docs/results/rl_fairness.md`):** items 1–5 executed (6 regimes incl. the random-walk null arm, 5 training seeds × 5 eval seed families × 20 episodes, symmetric information in both modes, fair baselines, fees + queue on, IS vs arrival and vs market VWAP). **PPO is not significantly better than the best fair baseline (`adaptive_pov`) on highvol / highvol_null / trending; it is significantly worse on the calm and lowvol hold-outs (5/5 seeds); it is significantly better only under `liquidity_shock` (+0.4…+1.4 bps, 5/5 novol, 4/5 volsym).** The +50.4 % number is retired; the README line reads "no significant edge except under liquidity shocks".
 
 ---
 
@@ -226,13 +228,13 @@ Exact shipped API: **`docs/work_package_b_phases_2_4.md §2.2`** (frozen). Signa
 
 - [ ] Working tree == `main` == README; no stale branches behind the docs.
 - [ ] CI green (Linux + Windows): build, CTest, pytest, lint.
-- [ ] At least one real NASDAQ ITCH tape parsed + replayed cleanly; asserted in CI.
-- [ ] E1–E6 with walk-forward splits, rank IC/ICIR, block-bootstrap CIs; at least one negative/unstable result reported.
-- [ ] Execution eval: per-regime, ≥5 seeds, CI-reported, symmetric information, fair baselines, fees+queue on; headline re-verified or explicitly re-characterized.
-- [ ] Cost/queue/impact model present; IS reported vs **market** VWAP, with fill %, completion, MDD.
+- [x] At least one real NASDAQ ITCH tape parsed + replayed cleanly (12/30/2019 AAPL/QQQ, 0 truncated, integrity clean, Engine-vs-Stub parity exact on the pre-market prefix); `test_offline_real_tape.py` asserts it whenever `data/` is present (CI has no tape — skips).
+- [x] E1–E6 with walk-forward splits, rank IC, block-bootstrap CIs on a real day (`docs/results/real_tape_12302019.md`); negative results: `spread_bps` has no IC anywhere, microprice is not better than L1 imbalance, the per-event order-level OFI is weaker than the L2 approximation at h=1 (it only wins as a rolling flow at h ≥ 10), and the synthetic vignette stays null.
+- [x] Execution eval: per-regime, ≥5 seeds, CI-reported, symmetric information, fair baselines, fees+queue on; headline **re-characterized** (`docs/results/rl_fairness.md`).
+- [x] Cost/queue/impact model present (Phase 2 `execution/`); IS reported vs **market** VWAP with completion in the fairness study (`docs/results/rl_fairness.md`: `PPO slip vs market VWAP`, `PPO completion`); fill % and MDD are available via `execution.metrics` / `backtest.summarize` but are not in the committed E7 table.
 - [ ] Zero-alloc + throughput/latency measured on a documented Linux box (compiler, flags, CPU, ≥30 runs, CI/IQR).
 - [ ] CUDA risk measured (or clearly parked with the exact blocker).
-- [ ] `docs/RESEARCH.md` exists: hypotheses, methods, tables, and a "what we tried that failed" section.
+- [x] `docs/RESEARCH.md` exists: hypotheses, methods, tables, and a "what we tried that failed" section (§8, seven items).
 
 ---
 
@@ -251,3 +253,15 @@ Exact shipped API: **`docs/work_package_b_phases_2_4.md §2.2`** (frozen). Signa
   - **Tests:** `test_cost_model.py` (10) + `test_exec_backtest.py` (14) — fee/rebate signs, impact monotonicity, MDD on a hand-built path, slippage sign + market-not-self benchmark, cost-folds-into-reward-not-slippage, env byte-parity, market-VWAP volume-weighting. **Full suite 110 passed / 1 skipped**; ruff clean; `research_vignette.py` still prints the honest null IC table.
   - **Interfaces:** frozen in `docs/work_package_b_phases_2_4.md §2.2` (bumped for the two intended deltas: env-factory backtest + maker/taker-aware env costs).
   - **Remaining (unchanged):** Phase 3 (queue dynamics + RL fairness rework, random-walk null arm) → Phase 4 (real tape; `fetch_itch.py` + `run_research.py` + order-level parser events).
+- **2026-09-13 (later) — Phases 3 + 4 landed (Person B, branch `hoplite/kranioi-5b44d8a8`).**
+  - **Phase 3 / E5–E6:** `research/queue_dynamics.py` (`OrderLevelTracker` with exact FIFO ahead/behind, first-fill time, touch distances via lazy-heap BBO; Kaplan–Meier `fill_prob_survival` with cancels as competing risk; ridge-logistic `logistic_fill_model` with walk-forward holdout, Brier skill and calibration slope) + `research/adverse_selection.py` (signed post-fill drift, Newey–West t, pre-fill matched control, P(adverse), grouped by side / OFI sign / queue position). 19 tests, all exact (hand-computed KM, known-logistic recovery, constructed adverse stream).
+  - **Phase 3 / §6 fairness:** `envs/regimes.py` (6 regimes incl. `highvol_null` random-walk null arm, `COSTS_ON`), fair baselines (`schedule_twap`, `adaptive_pov`, `is_aware`) + `regime_indicator` for symmetric information, `agents/evaluate.py` `run_regime_episodes` / `ci_from_rows` / `evaluate_regime_ci` / `paired_difference_ci`, `scripts/rl_fairness_study.py`. **Result:** no significant PPO edge vs `adaptive_pov` except under liquidity shocks; worse on calm/lowvol hold-outs. Committed at `docs/results/rl_fairness.{md,json}`.
+  - **Phase 4 / real tape:** `scripts/fetch_itch.py` streams the public `emi.nasdaq.com` day and slices per symbol (`data/`, gitignored, manifest with SHA-256); `scripts/run_research.py` runs E1–E6 with order-level OFI (Cont–Kukanov–Stoikov `e_n`), test-split block-bootstrap CIs, train-fit OLS combination, DM tests, KM/logistic fill model, adverse-selection report → `docs/results/real_tape_12302019.md`. Parser 0 truncated on 1.5 M real messages; replay integrity clean; Engine-vs-Stub ladder parity exact on 7,037 real frames (engine needs a real price band, e.g. `Engine(1_000_000, 5_000_000, 1<<20)`).
+  - **Spine fixes found on real data:** `features.ofi` upgraded to the CKS level-1 definition (touch moves count the full queue); `_rank`/block-bootstrap vectorized (output-identical, 50× faster — 200k-row bootstrap now 38 s); `decile_spread` averaged the 10 extreme points instead of decile bins — fixed; `research_vignette.py` sys.path pointed one level too shallow — fixed.
+  - Tier 1: **152 passed** (was 110 / 1 skipped). ruff clean.
+- **2026-09-13 (final) — Phase 5 landed (Person B, branch `hoplite/kranioi-5b44d8a8`). Research half complete.**
+  - **Full-day E1–E6 rerun** on both symbols (`run_research.py --day 12302019 --symbols AAPL,QQQ --n-boot 300`, 1,289 s): AAPL 1,484,259 / QQQ 2,209,131 regular-session rows, 0 truncated, integrity clean, tracker 0 unknown ids. Results replaced the smoke-run numbers in `docs/results/real_tape_12302019.{md,json}`; hit rate now counts sign agreement only where label AND feature are non-zero and reports the coverage (`cov`) — a zero per-event OFI is "no view", not a miss.
+  - **`docs/RESEARCH.md`** — full report: §2 data/provenance + parser validation on real bytes, §3 split & rigor discipline, §4 E1–E4 (AAPL: L1-imbalance IC 0.140→0.229 h=1→25, QQQ 0.155→0.462, all CIs ±≤0.014; OLS combination 0.164→0.288 / 0.157→0.461), §5 E5 (KM fill curves; logistic slope 1.09 / 1.03, Brier skill +0.080 / +0.016), §6 E6 (post-fill drift −20/−50/−93 ticks AAPL, −11/−26/−44 QQQ, NW |t| 68–147, P(adverse) 0.90–0.99, pre-fill control confirms selection not momentum), §7 E7 fair RL table, **§8 seven negative results** (headline not reproduced; microprice ≯ imbalance; spread has no IC; per-event OFI weaker than the L2 approx at h=1; fill model has little skill beyond base rate; OFI sign does not explain away adverse selection; synthetic vignette stays null), §9 reproduce, §10 DoD. Every number cross-checked against the final JSON (script-verified, 0 mismatches).
+  - **`scripts/run_all.py`** — one-command reproduce (`tests → vignette → fetch → research → fairness`), `--skip`, `--quick` (writes to gitignored `docs/results/quick/`).
+  - README/PROGRESS/CLAUDE/progress_b rewritten to the measured numbers; `docs/work_package_b_phases_2_4.md` closed out.
+  - **Remaining (research half):** more tape days / symbols (`fetch_itch.py --day …`, ≈ 14 min each); the E7 table could add fill % / MDD from `execution.backtest.summarize`. Person A: GPU + hardware numbers.
