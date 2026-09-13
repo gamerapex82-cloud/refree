@@ -120,22 +120,39 @@ def spread_bps(view: _View) -> float:
 # order-flow approximation + history features
 # ---------------------------------------------------------------------------
 def ofi(prev_view: _View | None, cur_view: _View, k: int = 1) -> float:
-    """Order-flow imbalance across a book update.
+    """Order-flow imbalance across a book update — Cont–Kukanov–Stoikov (2014).
 
-    Approximation from two L2 ladders (order-level deltas need the Phase 3
-    tracker): when a level's displayed size rises the volume is treated as
-    add-flow on that side, when it falls the delta is treated as cancel-flow
-    (the exact add/cancel split is unknowable from an L2 snapshot alone).
+    Level-1 form (``k=1``): with best bid/ask ``(P_b, V_b)`` / ``(P_a, V_a)``::
+
+        e = 1{P_b ≥ P_b'}·V_b − 1{P_b ≤ P_b'}·V_b' − 1{P_a ≤ P_a'}·V_a + 1{P_a ≥ P_a'}·V_a'
+
+    (primes = previous view). A bid that steps UP contributes its full new size
+    (+V_b) and a bid that steps DOWN removes the whole old queue (−V_b');
+    symmetric for the ask. When the touch price is unchanged this collapses to
+    ``ΔV_b − ΔV_a``. This is the *L2 ladder approximation*: it cannot see
+    inside a level, so a cancel and an execution of the same size look alike.
+    ``scripts/run_research.py::order_level_ofi`` is the exact order-level
+    version (needs the ITCH order stream). For ``k > 1`` the size deltas over
+    the top ``k`` levels are used (no price-move term).
     """
     if prev_view is None:
         return 0.0
+    if k == 1:
+        pb0, vb0 = int(prev_view["bid_px"][0]), float(prev_view["bid_sz"][0])
+        pa0, va0 = int(prev_view["ask_px"][0]), float(prev_view["ask_sz"][0])
+        pb1, vb1 = int(cur_view["bid_px"][0]), float(cur_view["bid_sz"][0])
+        pa1, va1 = int(cur_view["ask_px"][0]), float(cur_view["ask_sz"][0])
+        e = 0.0
+        if pb0 > 0 and pb1 > 0:
+            e += (vb1 if pb1 >= pb0 else 0.0) - (vb0 if pb1 <= pb0 else 0.0)
+        if pa0 > 0 and pa1 > 0:
+            e -= (va1 if pa1 <= pa0 else 0.0) - (va0 if pa1 >= pa0 else 0.0)
+        return e
     vb_prev = float(np.sum(prev_view["bid_sz"][:k]))
     va_prev = float(np.sum(prev_view["ask_sz"][:k]))
     vb_cur = float(np.sum(cur_view["bid_sz"][:k]))
     va_cur = float(np.sum(cur_view["ask_sz"][:k]))
-    e_bid = max(0.0, vb_cur - vb_prev) - max(0.0, vb_prev - vb_cur)
-    e_ask = max(0.0, va_cur - va_prev) - max(0.0, va_prev - va_cur)
-    return e_bid - e_ask
+    return (vb_cur - vb_prev) - (va_cur - va_prev)
 
 
 def realized_vol(mid_hist: Sequence[float], n: int = 10) -> float:

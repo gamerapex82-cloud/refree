@@ -107,7 +107,33 @@ def test_ofi_approximation_sign(filled_book: StubOrderBook) -> None:
     v1 = filled_book.view()
     filled_book.add(Side.Bid, 15000, 300)  # bid size rises -> buy pressure
     v2 = filled_book.view()
-    assert ofi(v1, v2) > 0.0
+    assert ofi(v1, v2) == pytest.approx(300.0)
+    # ask side: adding to the best ask is sell pressure (negative)
+    filled_book.add(Side.Ask, 15003, 50)
+    v3 = filled_book.view()
+    assert ofi(v2, v3) == pytest.approx(-50.0)
+
+
+def test_ofi_touch_price_moves_follow_cont_kukanov_stoikov(filled_book: StubOrderBook) -> None:
+    """A bid stepping UP counts its whole new size; stepping DOWN removes the
+    whole old queue — the level-1 OFI definition, not a size delta."""
+    v0 = filled_book.view()
+    vb0 = float(v0["bid_sz"][0])
+    filled_book.add(Side.Bid, 15001, 70)  # new best bid one tick higher
+    v1 = filled_book.view()
+    assert int(v1["bid_px"][0]) == 15001
+    assert ofi(v0, v1) == pytest.approx(70.0)
+    filled_book.cancel(Side.Bid, 15001, 70)  # best bid steps back down to 15000
+    v2 = filled_book.view()
+    assert int(v2["bid_px"][0]) == 15000
+    assert ofi(v1, v2) == pytest.approx(-70.0)
+    # unchanged prices -> plain size delta on both sides
+    filled_book.cancel(Side.Ask, 15003, 30)
+    v3 = filled_book.view()
+    assert ofi(v2, v3) == pytest.approx(30.0)
+    assert vb0 == float(v3["bid_sz"][0])
+    # previous view missing -> defined as 0 (row 0 has no predecessor)
+    assert ofi(None, v3) == 0.0
 
 
 def test_history_features(filled_book: StubOrderBook) -> None:

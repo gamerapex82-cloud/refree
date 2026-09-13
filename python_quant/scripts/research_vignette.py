@@ -31,7 +31,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # Windows cp1252 safe
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "python_quant"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "python_quant"))
 
 from nexus_quant.book_state import Side, StubOrderBook
 from nexus_quant.research import event_frame, hit_rate, make_split, run_experiment

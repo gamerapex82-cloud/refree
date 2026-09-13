@@ -22,19 +22,20 @@ import numpy as np
 # signal metrics
 # ---------------------------------------------------------------------------
 def _rank(x: np.ndarray) -> np.ndarray:
-    """Average ranks (standard Spearman) — ties are common on integer-tick labels."""
+    """Average ranks (standard Spearman) — ties are common on integer-tick labels.
+
+    Vectorized: a tie block occupying sorted positions ``[i, j)`` gets rank
+    ``(i + j − 1) / 2`` for every member (identical to the scalar definition).
+    """
     n = x.size
     order = np.argsort(x, kind="mergesort")
+    xs = x[order]
+    new_block = np.concatenate(([True], xs[1:] != xs[:-1]))
+    starts = np.flatnonzero(new_block)
+    ends = np.concatenate((starts[1:], [n]))
+    block_rank = (starts + ends - 1) / 2.0
     ranks = np.empty(n, dtype=np.float64)
-    ranks[order] = np.arange(n, dtype=np.float64)
-    i = 0
-    while i < n:
-        j = i + 1
-        while j < n and x[order[j]] == x[order[i]]:
-            j += 1
-        if j - i > 1:
-            ranks[order[i:j]] = (i + j - 1) / 2.0
-        i = j
+    ranks[order] = block_rank[np.cumsum(new_block) - 1]
     return ranks
 
 
@@ -72,15 +73,22 @@ def hit_rate(y_true: Sequence[float], y_pred: Sequence[float]) -> float:
 
 
 def decile_spread(y_true: Sequence[float], y_pred: Sequence[float], n: int = 10) -> float:
-    """mean(label of top pred decile) − mean(label of bottom pred decile)."""
+    """mean(label | top decile of prediction) − mean(label | bottom decile).
+
+    ``n`` is the number of quantile bins (10 = deciles): the top and bottom
+    ``size // n`` observations by prediction are averaged, so the statistic
+    is a *bin* mean, not the mean of ``n`` extreme points. NaN if fewer than
+    ``2n`` observations.
+    """
     a = np.asarray(y_true, dtype=np.float64)
     b = np.asarray(y_pred, dtype=np.float64)
     if a.size != b.size or a.size < 2 * n:
         return float("nan")
     order = np.argsort(b, kind="mergesort")
     a_sorted = a[order]
-    top = a_sorted[-n:].mean()
-    bot = a_sorted[:n].mean()
+    k = max(1, a.size // n)
+    top = a_sorted[-k:].mean()
+    bot = a_sorted[:k].mean()
     return float(top - bot)
 
 
@@ -119,9 +127,7 @@ def bootstrap_ci(
     for b in range(n_boot):
         if kind == "block":
             starts = rng.integers(0, n, size=n_blocks)
-            idx = np.concatenate(
-                [np.arange(s, min(s + blen, n), dtype=np.int64) for s in starts]
-            )[:n]
+            idx = _block_indices(starts, blen, n)
             if idx.size == 0:
                 idx = np.arange(n)
             sample = x[idx]
@@ -134,6 +140,16 @@ def bootstrap_ci(
 
 def _mean(x: np.ndarray) -> float:
     return float(np.mean(x))
+
+
+def _block_indices(starts: np.ndarray, blen: int, n: int) -> np.ndarray:
+    """Concatenate ``[s, min(s+blen, n))`` for every block start, truncated to ``n`` draws.
+
+    Same draw as the scalar loop it replaces (block-by-block, clipped at the
+    series end), computed without a Python-level list of ranges.
+    """
+    idx = (starts[:, None] + np.arange(blen, dtype=np.int64)[None, :]).ravel()
+    return idx[idx < n][:n] if blen > 0 else np.arange(n)
 
 
 # ---------------------------------------------------------------------------
@@ -256,9 +272,7 @@ def _rank_ic_bootstrap(
     stats = np.empty(n_boot, dtype=np.float64)
     for b in range(n_boot):
         starts = rng.integers(0, n, size=n_blocks)
-        idx = np.concatenate(
-            [np.arange(s, min(s + blen, n), dtype=np.int64) for s in starts]
-        )[:n]
+        idx = _block_indices(starts, blen, n)
         stats[b] = rank_ic(yt[idx], yp[idx])
     lo, hi = np.quantile(stats, [alpha / 2, 1 - alpha / 2])
     return {"lo": float(lo), "hi": float(hi), "mean": float(np.mean(stats))}
